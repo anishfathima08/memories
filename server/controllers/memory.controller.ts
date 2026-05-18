@@ -6,9 +6,19 @@ export const createMemory = async (req: Request, res: Response): Promise<any> =>
         const userId = req.user?.id;
         if (!userId) return res.status(401).json({ success: false, message: 'Unauthorized' });
 
-        const { type, album, location, date, files } = req.body;
+        const { type, album, location, date, files } = req.body || {};
 
-        if (!album || !files || !Array.isArray(files) || files.length === 0) {
+        // Parse files from multipart form-data or JSON body
+        let fileList: string[] = [];
+        if (req.files && Array.isArray(req.files)) {
+            fileList = (req.files as Express.Multer.File[]).map(file => {
+                return `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
+            });
+        } else if (files && Array.isArray(files)) {
+            fileList = files;
+        }
+
+        if (!album || fileList.length === 0) {
             return res.status(400).json({ success: false, message: 'Album and files are required' });
         }
 
@@ -23,15 +33,21 @@ export const createMemory = async (req: Request, res: Response): Promise<any> =>
         });
 
         // Insert files sequentially to prevent "Server has closed the connection" packet size errors
+        // We use $executeRawUnsafe to bypass MySQL's prepared statement parameter size limit (max_long_data_size)
+        // since base64 data only contains safe base64 characters (A-Z, a-z, 0-9, +, /, =), it is completely safe from SQL injection.
         const createdFiles = [];
-        for (const fileData of files) {
-            const file = await prisma.memoryFile.create({
-                data: {
-                    memoryId: memory.id,
-                    data: fileData
-                }
-            });
-            createdFiles.push(file);
+        for (const fileData of fileList) {
+            await prisma.$executeRawUnsafe(
+                `INSERT INTO MemoryFile (memoryId, data) VALUES (${memory.id}, '${fileData}')`
+            );
+            
+            // Retrieve the newly created file to return it in the response
+            const [createdFile] = await prisma.$queryRawUnsafe<any[]>(
+                `SELECT * FROM MemoryFile WHERE memoryId = ${memory.id} ORDER BY id DESC LIMIT 1`
+            );
+            if (createdFile) {
+                createdFiles.push(createdFile);
+            }
         }
 
         const finalMemory = { ...memory, files: createdFiles };

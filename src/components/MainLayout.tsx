@@ -22,6 +22,7 @@ export const MainLayout: React.FC = () => {
   const [fileList, setFileList] = useState<UploadFile[]>([]);
   const [coverFileList, setCoverFileList] = useState<UploadFile[]>([]);
   const [_uploadError, setUploadError] = useState<string | null>(null);
+  const mediaType = Form.useWatch('type', form);
 
   const albums = Array.from(new Set(memories.map(m => m.album))).filter(Boolean);
 
@@ -46,8 +47,12 @@ export const MainLayout: React.FC = () => {
       const reader = new FileReader();
       reader.readAsDataURL(file);
       reader.onload = () => resolve(reader.result as string);
-      reader.onerror = (error) => reject(error);
+      reader.onerror = () => {
+        const fileError = reader.error || new Error('File read failed (could be out of memory or restricted file access)');
+        reject(fileError);
+      };
     });
+
 
   const handleAddMemory = async (values: any) => {
     try {
@@ -62,17 +67,7 @@ export const MainLayout: React.FC = () => {
         }
       }
 
-      // Convert other files to base64 sequentially to prevent mobile browser memory crashes
-      const validBase64Files = [];
-      for (const f of fileList) {
-        const rawFile = f.originFileObj || f;
-        if (rawFile instanceof File) {
-          const base64 = await getBase64(rawFile);
-          if (base64) validBase64Files.push(base64);
-        }
-      }
-
-      if (validBase64Files.length === 0 && !coverBase64) {
+      if (fileList.length === 0 && !coverBase64) {
         setUploadError('Please upload files!');
         setLoading(false);
         return;
@@ -96,16 +91,26 @@ export const MainLayout: React.FC = () => {
         }
       }
 
-      // 2. Save the actual memory (if there are general files)
-      if (validBase64Files.length > 0) {
-        const payload = {
-          type: values.type,
-          location: values.location,
-          date: values.date ? values.date.format('YYYY-MM-DD') : null,
-          album: albumName,
-          files: validBase64Files,
-        };
-        const response = await api.post('/memories', payload);
+      // 2. Save the actual memory (if there are general files) using FormData to avoid base64 memory crashes
+      if (fileList.length > 0) {
+        const formData = new FormData();
+        formData.append('type', values.type || 'image');
+        formData.append('location', values.location || '');
+        formData.append('date', values.date ? values.date.format('YYYY-MM-DD') : '');
+        formData.append('album', albumName || '');
+
+        for (const f of fileList) {
+          const rawFile = f.originFileObj || f;
+          if (rawFile instanceof File) {
+            formData.append('files', rawFile);
+          }
+        }
+
+        const response = await api.post('/memories', formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+        });
         if (response.data.success) {
           savedMemories.push(response.data.memory);
         }
@@ -123,7 +128,43 @@ export const MainLayout: React.FC = () => {
       }
     } catch (error) {
       console.error(error);
-      message.error("Failed to save memory. Check console for details.");
+      let errorDetail = "";
+      if (error && typeof error === 'object') {
+        const anyErr = error as any;
+        
+        // Handle native Event or ProgressEvent (in case it still occurs)
+        if (typeof Event !== 'undefined' && error instanceof Event) {
+          const target = error.target;
+          if (typeof FileReader !== 'undefined' && target instanceof FileReader) {
+            errorDetail = `File read error: ${target.error?.message || target.error?.name || 'Failed to read file'}`;
+          } else {
+            errorDetail = `Browser Event: ${error.type}`;
+          }
+        } 
+        // Handle Axios Response or Server error message
+        else {
+          const data = anyErr.response?.data;
+          if (data && typeof data === 'object' && data.message) {
+            errorDetail = data.message;
+          } else if (data && typeof data === 'string' && !data.trim().startsWith('<')) {
+            errorDetail = data.trim();
+          } else if (anyErr.message) {
+            errorDetail = anyErr.message;
+          } else if (anyErr.name) {
+            errorDetail = `${anyErr.name}: ${anyErr.message || ''}`;
+          } else {
+            const str = JSON.stringify(anyErr);
+            errorDetail = (str === '{}' || str === '{"isTrusted":true}') ? String(error) : str;
+          }
+        }
+      } else if (error) {
+        errorDetail = String(error);
+      }
+      
+      if (errorDetail.length > 200) {
+        errorDetail = errorDetail.substring(0, 200) + '...';
+      }
+      message.error(`Failed to save memory: ${errorDetail || 'Unknown error'}`);
     } finally {
       setLoading(false);
     }
@@ -322,11 +363,13 @@ export const MainLayout: React.FC = () => {
                 <Upload
                   listType="picture-card"
                   fileList={fileList}
-                  accept="image/*,video/*,audio/*"
+                  accept={mediaType === 'video' ? 'video/*' : mediaType === 'audio' ? 'audio/*' : 'image/*'}
                   beforeUpload={(file) => {
-                    const isTooLarge = file.size && file.size > 20 * 1024 * 1024;
+                    const isVideo = file.type?.startsWith('video/');
+                    const maxAllowedSize = isVideo ? 500 * 1024 * 1024 : 50 * 1024 * 1024; // 500MB for video, 50MB for image/audio
+                    const isTooLarge = file.size && file.size > maxAllowedSize;
                     if (isTooLarge) {
-                      message.error(`"${file.name}" is too large! Max allowed size is 20MB to prevent mobile browser crashes.`);
+                      message.error(`"${file.name}" is too large! Max allowed size is ${isVideo ? '500MB' : '50MB'}.`);
                       return Upload.LIST_IGNORE;
                     }
                     return false;

@@ -3,7 +3,7 @@ import { Loader } from '../../components/Loader';
 import React, { useState, useEffect } from 'react';
 import { Button, Typography, Tabs, Card, Input, Modal, App } from 'antd';
 import { useParams, useNavigate, useOutletContext, useLocation } from 'react-router-dom';
-import { ArrowLeftOutlined, EnvironmentOutlined, CalendarOutlined, FolderFilled, HeartFilled, SearchOutlined, DeleteOutlined, CheckOutlined, CloseOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, EnvironmentOutlined, CalendarOutlined, FolderFilled, HeartFilled, SearchOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, AudioFilled, PlayCircleOutlined, DownloadOutlined } from '@ant-design/icons';
 
 const { Text } = Typography;
 
@@ -211,6 +211,58 @@ export const Category: React.FC = () => {
     }
   };
 
+  const handleDownload = (file: any) => {
+    if (!file || !file.data) return;
+    try {
+      const parts = file.data.split(',');
+      if (parts.length < 2) return;
+      
+      const mimeMatch = parts[0].match(/:(.*?);/);
+      const mime = mimeMatch ? mimeMatch[1] : '';
+      const b64Data = parts[1];
+      
+      const byteCharacters = atob(b64Data);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: mime });
+      
+      let extension = 'bin';
+      if (mime) {
+        if (mime.includes('jpeg') || mime.includes('jpg')) extension = 'jpg';
+        else if (mime.includes('png')) extension = 'png';
+        else if (mime.includes('gif')) extension = 'gif';
+        else if (mime.includes('mp4')) extension = 'mp4';
+        else if (mime.includes('quicktime')) extension = 'mov';
+        else if (mime.includes('mp3') || mime.includes('mpeg')) extension = 'mp3';
+        else if (mime.includes('wav')) extension = 'wav';
+        else {
+          const mimeParts = mime.split('/');
+          if (mimeParts[1]) extension = mimeParts[1];
+        }
+      }
+      
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = `memory-${file.id || Date.now()}.${extension}`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 100);
+    } catch (e) {
+      console.error("Failed to download file:", e);
+      const link = document.createElement('a');
+      link.href = file.data;
+      link.download = `memory-${file.id || Date.now()}`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+  };
+
   useEffect(() => {
     if (location.state?.activeTab) {
       setActiveTab(location.state.activeTab);
@@ -218,6 +270,8 @@ export const Category: React.FC = () => {
   }, [location.state]);
 
   const mappedType = type === 'images' ? 'image' : type === 'videos' ? 'video' : 'audio';
+  const itemLabelPlural = type === 'videos' ? 'Videos' : type === 'audio' ? 'Audios' : 'Photos';
+  const itemLabelSingular = type === 'videos' ? 'Video' : type === 'audio' ? 'Audio' : 'Photo';
 
   const filteredMemories = memories.filter((m: any) => m.type === mappedType && !m.isDeleted && m.type !== 'cover');
   const albums = Array.from(new Set(filteredMemories.map((m: any) => m.album))).filter(Boolean);
@@ -241,7 +295,7 @@ export const Category: React.FC = () => {
   const tabItems = [
     {
       key: '1',
-      label: <span className="text-base font-bold">All Photos</span>,
+      label: <span className="text-base font-bold">All {itemLabelPlural}</span>,
       children: (
         fetchLoading ? (
           <Loader text="Loading memories..." />
@@ -270,8 +324,19 @@ export const Category: React.FC = () => {
                     onPointerCancel={cancelLongPress}
                     className={`polaroid-card gallery-thumbnail-card cursor-pointer transition-all ${isSelectionMode ? 'scale-[0.98]' : ''}`}
                     cover={
-                      <div className="aspect-square w-full bg-[#f0f2f5] flex items-center justify-center rounded overflow-hidden relative">
-                        <img src={file.data} alt="Memory" className="w-full h-full object-cover" />
+                      <div className="aspect-square w-full bg-[#f0f2f5] flex items-center justify-center rounded overflow-hidden relative group">
+                        {file.type === 'video' ? (
+                          <>
+                            <video src={file.data} className="w-full h-full object-cover" />
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/30 transition-colors pointer-events-none">
+                              <PlayCircleOutlined style={{ fontSize: '32px', color: 'white' }} />
+                            </div>
+                          </>
+                        ) : file.type === 'audio' ? (
+                          <AudioFilled style={{ fontSize: '48px', color: '#ff8e53' }} />
+                        ) : (
+                          <img src={file.data} alt="Memory" className="w-full h-full object-cover" />
+                        )}
                         {isSelectionMode && (
                           <div className={`absolute inset-0 border-4 transition-all ${isSelected ? 'border-[#ff8e53] bg-black/20' : 'border-transparent bg-black/0'}`}>
                             <div 
@@ -340,7 +405,9 @@ export const Category: React.FC = () => {
                   // Find the cover memory first
                   const coverMemory = memories.find((m: any) => m.album === album && m.type === 'cover' && !m.isDeleted);
                   // Fallback to the first file of the first memory in the album if no cover memory is set
-                  const coverImage = coverMemory?.files?.[0]?.data || albumMemories.find((m: any) => m.files && m.files.length > 0)?.files[0]?.data;
+                  const fallbackMemory = albumMemories.find((m: any) => m.files && m.files.length > 0);
+                  const coverData = coverMemory?.files?.[0]?.data || fallbackMemory?.files[0]?.data;
+                  const coverType = coverMemory ? 'image' : fallbackMemory?.type || 'image';
 
                   return (
                     <div key={album}>
@@ -349,9 +416,20 @@ export const Category: React.FC = () => {
                         onClick={() => navigate(`/category/${type}/album/${encodeURIComponent(album)}`)}
                         className="polaroid-card cursor-pointer"
                         cover={
-                          <div className="h-[120px] sm:h-[180px] bg-[#f0f2f5] flex items-center justify-center rounded overflow-hidden relative">
-                            {coverImage ? (
-                              <img src={coverImage} alt={album} className="w-full h-full object-cover" />
+                          <div className="h-[120px] sm:h-[180px] bg-[#f0f2f5] flex items-center justify-center rounded overflow-hidden relative group">
+                            {coverData ? (
+                              coverType === 'video' ? (
+                                <>
+                                  <video src={coverData} className="w-full h-full object-cover" />
+                                  <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/30 transition-colors pointer-events-none">
+                                    <PlayCircleOutlined style={{ fontSize: '32px', color: 'white' }} />
+                                  </div>
+                                </>
+                              ) : coverType === 'audio' ? (
+                                <AudioFilled style={{ fontSize: '48px', color: '#ff8e53' }} />
+                              ) : (
+                                <img src={coverData} alt={album} className="w-full h-full object-cover" />
+                              )
                             ) : (
                               <FolderFilled style={{ fontSize: '48px', color: '#ff8e53' }} />
                             )}
@@ -361,7 +439,7 @@ export const Category: React.FC = () => {
                         <div className="pt-1 flex items-center justify-between">
                           <div className="text-left overflow-hidden flex-1 pr-2">
                             <h3 className="m-0 text-[#ff7043] font-bold font-['Nunito']! truncate text-sm">{album}</h3>
-                            <span className="text-[11px] text-gray-500 font-bold block mt-0.5">{albumFilesCount} {albumFilesCount === 1 ? 'Photo' : 'Photos'}</span>
+                            <span className="text-[11px] text-gray-500 font-bold block mt-0.5">{albumFilesCount} {albumFilesCount === 1 ? itemLabelSingular : itemLabelPlural}</span>
                           </div>
                           <Button
                             type="text"
@@ -509,6 +587,17 @@ export const Category: React.FC = () => {
                   <span className="text-sm text-white/90 font-['Nunito'] leading-relaxed line-clamp-none sm:line-clamp-2">{allCategoryFiles[activeFileIndex]?.description}</span>
                 </div>
               )}
+
+              {/* Download Button */}
+              <div className="flex items-center gap-3 shrink-0 mt-3 sm:mt-0">
+                <Button
+                  type="text"
+                  icon={<DownloadOutlined style={{ fontSize: '24px', color: '#ff8e53' }} />}
+                  onClick={() => handleDownload(allCategoryFiles[activeFileIndex])}
+                  className="flex items-center justify-center hover:bg-[#ff8e53]/10! w-[48px] h-[48px] rounded-full border border-[#ff8e53]"
+                  title="Download File"
+                />
+              </div>
             </div>
           </div>
         </div>

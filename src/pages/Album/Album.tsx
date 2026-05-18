@@ -2,7 +2,7 @@ import api from '../../api/axios';
 import React, { useState, useEffect } from 'react';
 import { Button, Typography, Card, Popconfirm, App, Modal } from 'antd';
 import { useParams, useNavigate, useOutletContext } from 'react-router-dom';
-import { ArrowLeftOutlined, EnvironmentOutlined, CalendarOutlined, HeartFilled, EyeOutlined, DeleteOutlined, CheckOutlined, CloseOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, EnvironmentOutlined, CalendarOutlined, HeartFilled, EyeOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, AudioFilled, PlayCircleOutlined, DownloadOutlined } from '@ant-design/icons';
 
 const { Text } = Typography;
 
@@ -127,6 +127,8 @@ export const Album: React.FC = () => {
   };
 
   const mappedType = type === 'images' ? 'image' : type === 'videos' ? 'video' : 'audio';
+  const itemLabelPlural = type === 'videos' ? 'Videos' : type === 'audio' ? 'Audios' : 'Photos';
+  const itemLabelSingular = type === 'videos' ? 'Video' : type === 'audio' ? 'Audio' : 'Photo';
 
   const albumMemories = memories.filter((m: any) => m.type === mappedType && m.album === albumName && !m.isDeleted && m.type !== 'cover');
 
@@ -154,7 +156,7 @@ export const Album: React.FC = () => {
           message.success('Memory moved to trash!');
           setMemories(memories.filter((m: any) => m.id !== memoryId));
         } else {
-          message.success('Photo deleted successfully!');
+          message.success(`${itemLabelSingular} deleted successfully!`);
           setMemories(memories.map((m: any) => {
             if (m.id === memoryId) {
               return {
@@ -168,7 +170,7 @@ export const Album: React.FC = () => {
       }
     } catch (error) {
       console.error(error);
-      message.error('Failed to delete photo');
+      message.error(`Failed to delete ${itemLabelSingular.toLowerCase()}`);
     }
   };
 
@@ -221,6 +223,58 @@ export const Album: React.FC = () => {
     }
   };
 
+  const handleDownload = (file: any) => {
+    if (!file || !file.data) return;
+    try {
+      const parts = file.data.split(',');
+      if (parts.length < 2) return;
+      
+      const mimeMatch = parts[0].match(/:(.*?);/);
+      const mime = mimeMatch ? mimeMatch[1] : '';
+      const b64Data = parts[1];
+      
+      const byteCharacters = atob(b64Data);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: mime });
+      
+      let extension = 'bin';
+      if (mime) {
+        if (mime.includes('jpeg') || mime.includes('jpg')) extension = 'jpg';
+        else if (mime.includes('png')) extension = 'png';
+        else if (mime.includes('gif')) extension = 'gif';
+        else if (mime.includes('mp4')) extension = 'mp4';
+        else if (mime.includes('quicktime')) extension = 'mov';
+        else if (mime.includes('mp3') || mime.includes('mpeg')) extension = 'mp3';
+        else if (mime.includes('wav')) extension = 'wav';
+        else {
+          const mimeParts = mime.split('/');
+          if (mimeParts[1]) extension = mimeParts[1];
+        }
+      }
+      
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = `memory-${file.id || Date.now()}.${extension}`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 100);
+    } catch (e) {
+      console.error("Failed to download file:", e);
+      const link = document.createElement('a');
+      link.href = file.data;
+      link.download = `memory-${file.id || Date.now()}`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+  };
+
   return (
     <>
       <div className="mb-6 flex flex-col sm:flex-row sm:items-center gap-4">
@@ -238,7 +292,7 @@ export const Album: React.FC = () => {
             {albumName}
           </span>
           <span className="text-xs font-bold text-white bg-[#fe6b8b] px-2.5 py-0.5 rounded-full w-fit">
-            {allAlbumFiles.length} {allAlbumFiles.length === 1 ? 'Photo' : 'Photos'}
+            {allAlbumFiles.length} {allAlbumFiles.length === 1 ? itemLabelSingular : itemLabelPlural}
           </span>
         </div>
       </div>
@@ -270,8 +324,19 @@ export const Album: React.FC = () => {
                 onPointerLeave={cancelLongPress}
                 onPointerCancel={cancelLongPress}
                 cover={
-                  <div className="aspect-square w-full bg-[#f0f2f5] flex items-center justify-center rounded overflow-hidden relative">
-                    <img src={file.data} alt="Memory" className="w-full h-full object-cover" />
+                  <div className="aspect-square w-full bg-[#f0f2f5] flex items-center justify-center rounded overflow-hidden relative group">
+                    {file.type === 'video' ? (
+                      <>
+                        <video src={file.data} className="w-full h-full object-cover" />
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/30 transition-colors pointer-events-none">
+                          <PlayCircleOutlined style={{ fontSize: '32px', color: 'white' }} />
+                        </div>
+                      </>
+                    ) : file.type === 'audio' ? (
+                      <AudioFilled style={{ fontSize: '48px', color: '#ff8e53' }} />
+                    ) : (
+                      <img src={file.data} alt="Memory" className="w-full h-full object-cover" />
+                    )}
                     {isSelectionMode && (
                       <div className={`absolute inset-0 border-4 transition-all ${isSelected ? 'border-[#ff8e53] bg-black/20' : 'border-transparent bg-black/0'}`}>
                         <div 
@@ -295,8 +360,8 @@ export const Album: React.FC = () => {
                     className="w-full h-full flex items-center justify-center hover:bg-[#ff8e53]/5!"
                   />,
                   <Popconfirm
-                    title="Delete this photo?"
-                    description="Are you sure you want to delete this photo?"
+                    title={`Delete this ${itemLabelSingular.toLowerCase()}?`}
+                    description={`Are you sure you want to delete this ${itemLabelSingular.toLowerCase()}?`}
                     onConfirm={(e) => {
                       e?.stopPropagation();
                       handleDeleteFile(file.id, file.memoryId);
@@ -445,6 +510,17 @@ export const Album: React.FC = () => {
                   <span className="text-sm text-white/90 font-['Nunito'] leading-relaxed line-clamp-none sm:line-clamp-2">{allAlbumFiles[activeFileIndex]?.description}</span>
                 </div>
               )}
+
+              {/* Download Button */}
+              <div className="flex items-center gap-3 shrink-0 mt-3 sm:mt-0">
+                <Button
+                  type="text"
+                  icon={<DownloadOutlined style={{ fontSize: '24px', color: '#ff8e53' }} />}
+                  onClick={() => handleDownload(allAlbumFiles[activeFileIndex])}
+                  className="flex items-center justify-center hover:bg-[#ff8e53]/10! w-[48px] h-[48px] rounded-full border border-[#ff8e53]"
+                  title="Download File"
+                />
+              </div>
             </div>
           </div>
         </div>
